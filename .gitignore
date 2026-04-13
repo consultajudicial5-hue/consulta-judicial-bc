@@ -1,0 +1,12 @@
+node_modules
+.next
+npm-debug.log*
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.local
+.venv
+dist
+.DS_Store
+db_data
