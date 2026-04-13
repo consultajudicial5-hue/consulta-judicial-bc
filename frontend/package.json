@@ -1,0 +1,1 @@
+{\n  "name": "consulta-judicial-bc",\n  "version": "1.0.0",\n  "scripts": {\n    "dev": "next dev",\n    "build": "next build",\n    "start": "next start"\n  },\n  "dependencies": {\n    "next": "14",\n    "react": "18",\n    "react-dom": "18",\n    "tailwindcss": "3"\n  }\n}
