@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+httpx
+beautifulsoup4
+lxml
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+apscheduler
+tinydb
+python-dotenv
+pdfminer.six
