@@ -1,0 +1,9 @@
+{
+  "rootDirectory": "frontend",
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "env": {
+    "DATA_DIR": "/tmp/data"
+  }
+}
