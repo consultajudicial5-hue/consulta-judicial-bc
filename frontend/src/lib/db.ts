@@ -1,4 +1,6 @@
-// Uses Node.js built-in sqlite (available since Node.js 22)
+// Uses Node.js built-in sqlite (available since Node.js 22+).
+// require() is used instead of import because 'node:sqlite' is not yet
+// in Node's type definitions and must be loaded as a CommonJS module.
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const { DatabaseSync } = require('node:sqlite') as any
 import path from 'path'

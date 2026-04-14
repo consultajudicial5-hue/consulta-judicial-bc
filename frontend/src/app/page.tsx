@@ -78,8 +78,7 @@ export default function HomePage() {
       setFilteredResults([])
       setMeta(null)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ciudad])
+  }, [ciudad, search])
 
   // Real-time filter on expediente / partes (client-side, no extra request if results already loaded)
   useEffect(() => {

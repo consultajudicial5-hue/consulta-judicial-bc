@@ -5,6 +5,9 @@ import { getExpedientes, upsertExpedientes, hasScrapeLog, recordScrapeLog } from
 import { scrapeBoletin } from '@/lib/scraper'
 
 // In-memory cache: city+date -> { data, timestamp }
+// NOTE: This cache is per-process. It will be cleared on serverless cold starts
+// and is not shared across multiple instances. For multi-instance production
+// deployments, replace with a shared cache (Redis, etc.).
 const cache = new Map<string, { data: ReturnType<typeof getExpedientes>; timestamp: number }>()
 const CACHE_TTL = 30 * 60 * 1000 // 30 minutes
 
