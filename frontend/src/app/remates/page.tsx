@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface Remate {
   expediente: string;
@@ -25,7 +25,7 @@ export default function RematesPage() {
 
   const CITIES = ['Tijuana', 'Mexicali', 'Ensenada', 'Tecate', 'Rosarito'];
 
-  const fetchRemates = async () => {
+  const fetchRemates = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -40,12 +40,11 @@ export default function RematesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [ciudad]);
 
   useEffect(() => {
     fetchRemates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchRemates]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
