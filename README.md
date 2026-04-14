@@ -7,7 +7,7 @@ Sistema de consulta del Boletín Judicial del Poder Judicial de Baja California 
 - **Frontend + Backend**: Next.js 14 (App Router) + TypeScript
 - **Estilos**: Tailwind CSS 3
 - **Scraper**: Node.js (Cheerio) + Python (stdlib)
-- **Base de datos**: SQLite (better-sqlite3)
+- **Base de datos**: SQLite (Node.js built-in `node:sqlite`, disponible desde Node.js 22)
 - **Seguridad**: Zod (validación), rate limiting, headers de seguridad
 
 ## Instalación
