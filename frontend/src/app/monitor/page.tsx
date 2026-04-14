@@ -228,7 +228,7 @@ export default function MonitorPage() {
                       Exp. {c.expediente} — {c.juzgado}, {c.ciudad}
                     </div>
                     <div className="text-sm text-gray-600 mt-1">
-                      <strong>Nuevo acuerdo:</strong> {c.nuevo_acuerdo.substring(0, 200)}...
+                      <strong>Nuevo acuerdo:</strong> {c.nuevo_acuerdo.substring(0, 200)}{c.nuevo_acuerdo.length > 200 ? '...' : ''}
                     </div>
                     <div className="text-xs text-gray-400 mt-1">{c.fecha_revision}</div>
                   </div>

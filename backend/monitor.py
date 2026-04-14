@@ -82,6 +82,8 @@ async def revisar_todos() -> list:
             continue
 
         # Use the most recent acuerdo text
+        if not results:
+            continue
         latest_acuerdo = results[0]["acuerdo"]
         prev_acuerdo = exp.get("ultimo_acuerdo", "")
 

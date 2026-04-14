@@ -126,8 +126,8 @@ def parse_boletin(html: str, fecha: str) -> list[dict]:
         exp_match = expediente_pattern.search(line)
         if exp_match:
             expediente_num = exp_match.group(1) or exp_match.group(2) or exp_match.group(3)
-            # Get surrounding context as acuerdo text
-            context_lines = lines[max(0, i - 1): i + 3]
+            # Get surrounding context as acuerdo text (lines before + current + lines after)
+            context_lines = lines[max(0, i - 1): i] + [line] + lines[i + 1: i + 3]
             acuerdo_text = " ".join(context_lines)
             results.append(
                 {
