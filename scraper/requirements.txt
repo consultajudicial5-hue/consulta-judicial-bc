@@ -1,0 +1,2 @@
+# No external deps needed - uses stdlib only
+# Optional: beautifulsoup4>=4.12.0 for better parsing

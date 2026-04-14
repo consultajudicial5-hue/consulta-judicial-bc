@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Build
+dist/
+
+# Environment variables
+.env.local
+.env.*.local
+
+# SQLite data
+data/
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp

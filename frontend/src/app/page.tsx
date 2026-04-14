@@ -1,252 +1,259 @@
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import AnalysisModal from '@/components/AnalysisModal';
+import { useState, useEffect, useCallback, useRef } from 'react'
 
-interface SearchResult {
-  expediente: string;
-  juzgado: string;
-  ciudad: string;
-  fecha: string;
-  acuerdo: string;
+interface Expediente {
+  id?: number
+  expediente: string
+  partes: string
+  juzgado: string
+  ciudad: string
+  fecha: string
+  acuerdo: string
 }
 
-interface AnalysisResult {
-  diagnostico: string;
-  riesgo: 'alto' | 'medio' | 'bajo';
-  acciones: string[];
+interface SearchResponse {
+  results: Expediente[]
+  total: number
+  cached: boolean
+  fecha: string
+  error?: string
 }
 
-type CitiesMap = Record<string, string[]>;
+const CIUDADES = [
+  { value: '', label: '— Selecciona una ciudad —' },
+  { value: 'mexicali', label: 'Mexicali' },
+  { value: 'tijuana', label: 'Tijuana' },
+  { value: 'ensenada', label: 'Ensenada' },
+  { value: 'tecate', label: 'Tecate' },
+  { value: 'rosarito', label: 'Rosarito' },
+]
 
 export default function HomePage() {
-  const [cities, setCities] = useState<CitiesMap>({});
-  const [ciudad, setCiudad] = useState('');
-  const [juzgado, setJuzgado] = useState('');
-  const [expediente, setExpediente] = useState('');
-  const [results, setResults] = useState<SearchResult[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [searched, setSearched] = useState(false);
+  const [ciudad, setCiudad] = useState('')
+  const [expediente, setExpediente] = useState('')
+  const [partes, setPartes] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [results, setResults] = useState<Expediente[]>([])
+  const [filteredResults, setFilteredResults] = useState<Expediente[]>([])
+  const [meta, setMeta] = useState<{ total: number; cached: boolean; fecha: string } | null>(null)
+  const [error, setError] = useState('')
+  const debounceRef = useRef<NodeJS.Timeout | null>(null)
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [selectedAcuerdo, setSelectedAcuerdo] = useState('');
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
-  const [analysisLoading, setAnalysisLoading] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/cities')
-      .then((r) => r.json())
-      .then((data) => setCities(data))
-      .catch(() => {});
-  }, []);
-
-  const juzgados = ciudad ? cities[ciudad] ?? [] : [];
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!expediente.trim()) {
-      setError('Por favor ingrese el número de expediente.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    setResults(null);
-    setSearched(true);
-
+  const search = useCallback(async (params: { ciudad: string; expediente?: string; partes?: string }) => {
+    if (!params.ciudad) return
+    setLoading(true)
+    setError('')
     try {
-      const res = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ciudad, juzgado, expediente }),
-      });
+      const qs = new URLSearchParams()
+      if (params.ciudad) qs.set('ciudad', params.ciudad)
+      if (params.expediente) qs.set('expediente', params.expediente)
+      if (params.partes) qs.set('partes', params.partes)
+
+      const res = await fetch(`/api/search?${qs.toString()}`)
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Error al buscar');
+        const data = await res.json()
+        throw new Error(data.error || `Error ${res.status}`)
       }
-      const data = await res.json();
-      setResults(data.results);
+      const data: SearchResponse = await res.json()
+      setResults(data.results)
+      setFilteredResults(data.results)
+      setMeta({ total: data.total, cached: data.cached, fecha: data.fecha })
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Error de conexión con el servidor.');
+      const msg = err instanceof Error ? err.message : 'Error desconocido'
+      setError(msg)
+      setResults([])
+      setFilteredResults([])
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }, [])
 
-  const handleAnalyze = async (acuerdo: string) => {
-    setSelectedAcuerdo(acuerdo);
-    setAnalysis(null);
-    setModalOpen(true);
-    setAnalysisLoading(true);
-
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ texto: acuerdo }),
-      });
-      const data = await res.json();
-      setAnalysis(data);
-    } catch {
-      setAnalysis({
-        diagnostico: 'No se pudo conectar al servidor de análisis.',
-        riesgo: 'bajo',
-        acciones: ['Intente de nuevo más tarde.'],
-      });
-    } finally {
-      setAnalysisLoading(false);
+  // Auto-search when city changes
+  useEffect(() => {
+    if (ciudad) {
+      search({ ciudad, expediente: expediente || undefined, partes: partes || undefined })
+    } else {
+      setResults([])
+      setFilteredResults([])
+      setMeta(null)
     }
-  };
+  }, [ciudad, search])
+
+  // Real-time filter on expediente / partes (client-side, no extra request if results already loaded)
+  useEffect(() => {
+    if (!results.length) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      const expLower = expediente.toLowerCase().trim()
+      const partesLower = partes.toLowerCase().trim()
+      const filtered = results.filter(r => {
+        const matchExp = expLower ? r.expediente.toLowerCase().includes(expLower) : true
+        const matchPartes = partesLower ? r.partes.toLowerCase().includes(partesLower) : true
+        return matchExp && matchPartes
+      })
+      setFilteredResults(filtered)
+    }, 200)
+  }, [expediente, partes, results])
+
+  const handleManualSearch = (e: React.FormEvent) => {
+    e.preventDefault()
+    search({ ciudad, expediente: expediente || undefined, partes: partes || undefined })
+  }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-      {/* Hero */}
-      <div className="text-center mb-10">
-        <h1 className="text-4xl font-extrabold text-gray-900 mb-3">
-          El boletín judicial de BC,{' '}
-          <span className="text-primary">analizado por IA</span>
-        </h1>
-        <p className="text-gray-500 text-lg max-w-2xl mx-auto">
-          Busca tu expediente en los últimos 7 días del boletín del Poder Judicial de Baja California
-          y obtén un análisis inteligente de cada acuerdo.
-        </p>
-      </div>
+    <div className="max-w-7xl mx-auto px-4 py-8">
+      {/* Header */}
+      <header className="mb-8 text-center">
+        <h1 className="text-3xl font-bold text-blue-800">Consulta Judicial BC</h1>
+        <p className="text-gray-600 mt-1">Boletín Judicial del Poder Judicial de Baja California</p>
+      </header>
 
       {/* Search Form */}
-      <div className="bg-white rounded-2xl shadow-lg p-6 mb-8">
-        <form onSubmit={handleSearch} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Ciudad</label>
-              <select
-                value={ciudad}
-                onChange={(e) => { setCiudad(e.target.value); setJuzgado(''); }}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">Todas las ciudades</option>
-                {Object.keys(cities).map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Juzgado</label>
-              <select
-                value={juzgado}
-                onChange={(e) => setJuzgado(e.target.value)}
-                disabled={!ciudad}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
-              >
-                <option value="">Todos los juzgados</option>
-                {juzgados.map((j) => (
-                  <option key={j} value={j}>{j}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Número de Expediente <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={expediente}
-                onChange={(e) => setExpediente(e.target.value)}
-                placeholder="Ej. 123/2024"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
+      <form onSubmit={handleManualSearch} className="bg-white rounded-xl shadow p-6 mb-6" noValidate>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Ciudad */}
+          <div>
+            <label htmlFor="ciudad" className="block text-sm font-medium text-gray-700 mb-1">
+              Ciudad <span className="text-red-500">*</span>
+            </label>
+            <select
+              id="ciudad"
+              value={ciudad}
+              onChange={e => setCiudad(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {CIUDADES.map(c => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
           </div>
+
+          {/* Expediente */}
+          <div>
+            <label htmlFor="expediente" className="block text-sm font-medium text-gray-700 mb-1">
+              Número de Expediente
+            </label>
+            <input
+              id="expediente"
+              type="text"
+              value={expediente}
+              onChange={e => setExpediente(e.target.value)}
+              placeholder="Ej: 123/2024"
+              maxLength={100}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Partes */}
+          <div>
+            <label htmlFor="partes" className="block text-sm font-medium text-gray-700 mb-1">
+              Nombre de las Partes
+            </label>
+            <input
+              id="partes"
+              type="text"
+              value={partes}
+              onChange={e => setPartes(e.target.value)}
+              placeholder="Ej: García López"
+              maxLength={200}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-4">
           <button
             type="submit"
-            disabled={loading}
-            className="w-full sm:w-auto bg-primary text-white px-8 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+            disabled={!ciudad || loading}
+            className="bg-blue-700 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading && (
-              <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            )}
-            {loading ? 'Buscando...' : '🔍 Buscar en el Boletín'}
+            {loading ? 'Buscando…' : 'Buscar'}
           </button>
-        </form>
-      </div>
+          {meta && (
+            <span className="text-sm text-gray-500">
+              {filteredResults.length} de {meta.total} resultado(s) · Boletín: {meta.fecha}
+              {meta.cached && <span className="ml-2 text-green-600">(caché)</span>}
+            </span>
+          )}
+        </div>
+      </form>
 
       {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 mb-6">
-          {error}
+        <div role="alert" className="bg-red-50 border border-red-300 text-red-700 rounded-lg px-4 py-3 mb-6">
+          <strong>Error:</strong> {error}
         </div>
       )}
 
-      {/* Results */}
-      {searched && !loading && results !== null && (
-        <>
-          {results.length === 0 ? (
-            <div className="bg-white rounded-2xl shadow p-10 text-center text-gray-500">
-              <div className="text-5xl mb-4">📋</div>
-              <p className="text-lg font-medium">No se encontraron resultados</p>
-              <p className="text-sm mt-1">
-                No se encontraron resultados para este expediente en los últimos 7 días del boletín.
-              </p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl shadow overflow-hidden">
-              <div className="px-6 py-4 border-b bg-gray-50">
-                <h2 className="font-semibold text-gray-700">
-                  {results.length} resultado{results.length !== 1 ? 's' : ''} encontrado{results.length !== 1 ? 's' : ''}
-                </h2>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      {['Expediente', 'Juzgado', 'Ciudad', 'Fecha', 'Resumen del Acuerdo', 'Acción'].map((h) => (
-                        <th
-                          key={h}
-                          className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                        >
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-100">
-                    {results.map((r, i) => (
-                      <tr key={i} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 text-sm font-mono font-medium text-gray-900 whitespace-nowrap">
-                          {r.expediente}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{r.juzgado}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{r.ciudad}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{r.fecha}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700 max-w-xs">
-                          <p className="line-clamp-2 leading-relaxed">{r.acuerdo}</p>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <button
-                            onClick={() => handleAnalyze(r.acuerdo)}
-                            className="bg-secondary text-white text-xs px-3 py-1.5 rounded-lg hover:bg-green-700 transition-colors font-medium"
-                          >
-                            🧠 Analizar con IA
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-3">
+          {[1,2,3].map(i => (
+            <div key={i} className="bg-white rounded-lg h-20 animate-pulse" />
+          ))}
+        </div>
       )}
 
-      {/* Modal */}
-      {modalOpen && (
-        <AnalysisModal
-          acuerdo={selectedAcuerdo}
-          analysis={analysis}
-          loading={analysisLoading}
-          onClose={() => setModalOpen(false)}
-        />
+      {/* Results Table */}
+      {!loading && filteredResults.length > 0 && (
+        <div className="bg-white rounded-xl shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-blue-700 text-white">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium">Expediente</th>
+                  <th className="px-4 py-3 text-left font-medium">Partes</th>
+                  <th className="px-4 py-3 text-left font-medium">Juzgado</th>
+                  <th className="px-4 py-3 text-left font-medium">Ciudad</th>
+                  <th className="px-4 py-3 text-left font-medium">Fecha</th>
+                  <th className="px-4 py-3 text-left font-medium">Acuerdo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredResults.map((r, idx) => (
+                  <tr key={r.id ?? idx} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">{r.expediente}</td>
+                    <td className="px-4 py-3 max-w-xs truncate" title={r.partes}>{r.partes}</td>
+                    <td className="px-4 py-3">{r.juzgado}</td>
+                    <td className="px-4 py-3 capitalize">{r.ciudad}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">{r.fecha}</td>
+                    <td className="px-4 py-3 max-w-sm truncate" title={r.acuerdo}>{r.acuerdo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
+
+      {/* Empty state */}
+      {!loading && !error && ciudad && filteredResults.length === 0 && results.length > 0 && (
+        <div className="text-center py-12 text-gray-500">
+          No se encontraron expedientes con ese filtro.
+        </div>
+      )}
+
+      {!loading && !error && ciudad && results.length === 0 && meta && (
+        <div className="text-center py-12 text-gray-500">
+          No hay expedientes publicados para {ciudad} en el boletín de hoy.
+        </div>
+      )}
+
+      {!ciudad && !loading && (
+        <div className="text-center py-16 text-gray-400">
+          <svg className="mx-auto mb-4 h-16 w-16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p className="text-lg">Selecciona una ciudad para consultar el boletín judicial</p>
+        </div>
+      )}
+
+      {/* Footer */}
+      <footer className="mt-12 text-center text-xs text-gray-400">
+        Datos obtenidos del <a href="https://www.pjbc.gob.mx" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600">Poder Judicial de Baja California</a>.
+        Actualización diaria automática.
+      </footer>
     </div>
-  );
+  )
 }

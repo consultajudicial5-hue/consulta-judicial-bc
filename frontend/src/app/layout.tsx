@@ -1,17 +1,16 @@
-import type { Metadata } from 'next';
-import './globals.css';
-import Header from '@/components/Header';
+import type { Metadata } from 'next'
+import './globals.css'
+import Header from '@/components/Header'
 
 export const metadata: Metadata = {
   title: 'Consulta Judicial BC – Buscador del Boletín Judicial',
-  description:
-    'Consulta el boletín judicial de Baja California, analiza acuerdos con IA y monitorea tu expediente.',
-};
+  description: 'Consulta expedientes judiciales del Boletín Judicial de Baja California (PJBC), analiza acuerdos con IA y monitorea tu expediente.',
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
-      <body className="min-h-screen flex flex-col">
+      <body className="bg-gray-50 text-gray-900 min-h-screen flex flex-col">
         <Header />
         <main className="flex-1">{children}</main>
         <footer className="bg-gray-800 text-gray-300 text-center py-4 text-sm">
@@ -32,5 +31,5 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </footer>
       </body>
     </html>
-  );
+  )
 }

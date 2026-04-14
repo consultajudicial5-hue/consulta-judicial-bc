@@ -1,140 +1,151 @@
-# ⚖️ Consulta Judicial BC
+# Consulta Judicial BC
 
-Plataforma web para consultar el Boletín Judicial del Poder Judicial de Baja California (PJBC), con análisis de acuerdos mediante IA basada en reglas, monitoreo automático de expedientes, búsqueda de remates y análisis de documentos legales.
+Sistema de consulta del Boletín Judicial del Poder Judicial de Baja California (PJBC).
 
-## Características
+## Tecnologías
 
-- 🔍 **Búsqueda de expedientes** en los últimos 7 días del boletín judicial
-- 🧠 **Análisis de IA** de acuerdos (basado en reglas NLP, sin API externa)
-- 🔔 **Monitor automático** de expedientes con detección de cambios
-- 🏛️ **Búsqueda de remates y subastas** judiciales
-- 📄 **Analizador de documentos** legales (PDF y TXT)
+- **Frontend + Backend**: Next.js 14 (App Router) + TypeScript
+- **Estilos**: Tailwind CSS 3
+- **Scraper**: Node.js (Cheerio) + Python (stdlib)
+- **Base de datos**: SQLite (Node.js built-in `node:sqlite`, disponible desde Node.js 22)
+- **Seguridad**: Zod (validación), rate limiting, headers de seguridad
 
-## Prerrequisitos
-
-- Python 3.11+
-- Node.js 18+
-
-## Configuración del Backend
+## Instalación
 
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-La API estará disponible en `http://localhost:8000`.
-
-## Configuración del Frontend
-
-```bash
+# 1. Entra al directorio frontend
 cd frontend
+
+# 2. Instala dependencias
 npm install
+
+# 3. Configura variables de entorno
+cp .env.example .env.local
+# Edita .env.local si es necesario
+
+# 4. Inicia en modo desarrollo
 npm run dev
 ```
 
-La aplicación estará disponible en `http://localhost:3000`.
+La app estará disponible en http://localhost:3000
 
-## Variables de Entorno
+## Scripts disponibles
 
-Crea un archivo `.env` en el directorio `backend/` si necesitas configuración adicional:
-
-```env
-# Opcional: para futuras integraciones con IA externa
-OPENAI_API_KEY=sk-...  # Opcional, la app funciona sin esto
+```bash
+npm run dev      # Servidor de desarrollo
+npm run build    # Build de producción
+npm run start    # Servidor de producción (requiere build previo)
+npm run lint     # Linter
 ```
 
-El analizador de IA funciona completamente sin API externa usando reglas NLP.
+## Endpoints
 
-## Documentación de la API
+### `GET /api/search`
 
-### Búsqueda
+Parámetros de query:
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `POST` | `/api/search` | Busca un expediente en el boletín |
-| `GET` | `/api/cities` | Retorna ciudades y juzgados disponibles |
+| Param       | Tipo   | Requerido | Descripción                        |
+|-------------|--------|-----------|------------------------------------|
+| ciudad      | string | ✅        | Ciudad (mexicali, tijuana, etc.)   |
+| expediente  | string | ❌        | Filtro por número de expediente    |
+| partes      | string | ❌        | Filtro por nombre de las partes    |
 
-**POST /api/search**
+**Ejemplo:**
+```
+GET /api/search?ciudad=mexicali&expediente=123
+```
+
+**Respuesta:**
 ```json
 {
-  "ciudad": "Tijuana",
-  "juzgado": "Juzgado Primero Civil",
-  "expediente": "123/2024"
+  "results": [
+    {
+      "id": 1,
+      "expediente": "123/2024",
+      "partes": "García López Juan vs. Martínez Sánchez Ana",
+      "juzgado": "Juzgado Primero Civil",
+      "ciudad": "mexicali",
+      "fecha": "2024-01-15",
+      "acuerdo": "Se admite la demanda."
+    }
+  ],
+  "total": 1,
+  "cached": false,
+  "fecha": "2024-01-15"
 }
 ```
 
-### Análisis
+**Códigos de respuesta:**
+- `200` - OK
+- `400` - Parámetros inválidos
+- `429` - Rate limit excedido (30 req/min por IP)
+- `500` - Error interno
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `POST` | `/api/analyze` | Analiza texto de un acuerdo judicial |
+## Scraper Python
 
-**POST /api/analyze**
-```json
-{ "texto": "Se decreta el embargo de bienes del demandado..." }
+```bash
+cd scraper
+python scraper.py --ciudad mexicali
+python scraper.py --ciudad tijuana --fecha 2024-01-15 --output boletin.json
 ```
 
-### Monitor
+## Variables de entorno
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `GET` | `/api/monitor` | Lista expedientes monitoreados |
-| `POST` | `/api/monitor` | Agrega expediente al monitor |
-| `DELETE` | `/api/monitor/{id}` | Elimina expediente del monitor |
-| `POST` | `/api/monitor/check` | Ejecuta revisión manual |
+| Variable          | Default                              | Descripción               |
+|-------------------|--------------------------------------|---------------------------|
+| RATE_LIMIT_RPM    | 30                                   | Requests por minuto / IP  |
+| PJBC_BOLETIN_URL  | https://www.pjbc.gob.mx/boletin/    | URL del boletín PJBC      |
+| API_SECRET_KEY    | (vacío)                              | Clave para endpoints admin|
+| DATA_DIR          | ./data                               | Directorio de datos SQLite|
 
-### Documentos
+## Despliegue
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `POST` | `/api/documents/analyze` | Analiza documento PDF o TXT |
+### Vercel
 
-### Remates
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `GET` | `/api/remates` | Busca remates y subastas judiciales |
-
-Parámetros opcionales: `ciudad`, `fecha_inicio` (YYYY-MM-DD), `fecha_fin` (YYYY-MM-DD).
-
-## Estructura del Proyecto
-
-```
-consulta-judicial-bc/
-├── backend/
-│   ├── main.py              # Punto de entrada FastAPI
-│   ├── scraper.py           # Scraper del boletín PJBC
-│   ├── analyzer.py          # Analizador de acuerdos (NLP)
-│   ├── monitor.py           # Sistema de monitoreo (TinyDB)
-│   ├── requirements.txt
-│   ├── data/
-│   │   └── monitor.json     # Base de datos de expedientes monitoreados
-│   └── routers/
-│       ├── search.py
-│       ├── analyze.py
-│       ├── monitoring.py
-│       ├── documents.py
-│       └── remates.py
-└── frontend/
-    ├── src/
-    │   ├── app/
-    │   │   ├── layout.tsx
-    │   │   ├── page.tsx         # Búsqueda principal
-    │   │   ├── monitor/
-    │   │   ├── remates/
-    │   │   └── documentos/
-    │   └── components/
-    │       ├── Header.tsx
-    │       └── AnalysisModal.tsx
-    ├── next.config.js
-    ├── tailwind.config.js
-    └── package.json
+```bash
+# Desde el directorio frontend
+vercel --prod
 ```
 
-## Notas
+### Railway / VPS
 
-- El scraper hace peticiones reales al sitio `pjbc.gob.mx`. Si el boletín no está disponible, retorna lista vacía.
-- El analizador de IA no requiere ninguna API externa; funciona con reglas NLP en español.
-- El monitoreo automático se ejecuta diariamente a las 10:00am (hora Tijuana/México).
-- Los datos de monitoreo se almacenan localmente en `backend/data/monitor.json`.
+```bash
+npm run build
+npm run start
+```
+
+## Seguridad
+
+- Validación de inputs con Zod
+- Rate limiting por IP (30 req/min)
+- Headers de seguridad (XSS, CSP, CORS, X-Frame-Options)
+- Sanitización de datos del scraper
+- Datos sensibles en variables de entorno
+
+## Estructura del proyecto
+
+```
+.
+├── frontend/                 # Next.js app
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── page.tsx     # Página principal
+│   │   │   ├── layout.tsx   # Layout raíz
+│   │   │   ├── globals.css  # Estilos globales
+│   │   │   └── api/
+│   │   │       └── search/
+│   │   │           └── route.ts  # API endpoint
+│   │   └── lib/
+│   │       ├── db.ts        # SQLite
+│   │       ├── scraper.ts   # Scraper Node.js
+│   │       └── rateLimit.ts # Rate limiting
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── next.config.js
+│   ├── tailwind.config.ts
+│   └── .env.example
+├── scraper/
+│   ├── scraper.py           # Scraper Python (standalone)
+│   └── requirements.txt
+└── README.md
+```
