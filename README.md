@@ -1,151 +1,169 @@
-# Consulta Judicial BC
+# Monitor Judicial BC
 
-Sistema de consulta del Boletín Judicial del Poder Judicial de Baja California (PJBC).
+Sistema SaaS de consulta y monitoreo del Boletín Judicial del Poder Judicial de Baja California (PJBC).
 
 ## Tecnologías
 
-- **Frontend + Backend**: Next.js 14 (App Router) + TypeScript
+- **Frontend + API**: Next.js 15 (App Router) + TypeScript
 - **Estilos**: Tailwind CSS 3
+- **Base de datos**: Supabase (PostgreSQL)
+- **Pagos**: Stripe (suscripción mensual)
 - **Scraper**: Node.js (Cheerio) + Python (stdlib)
-- **Base de datos**: SQLite (Node.js built-in `node:sqlite`, disponible desde Node.js 22)
-- **Seguridad**: Zod (validación), rate limiting, headers de seguridad
+- **Deploy**: Vercel (CI/CD automático)
+- **Automatización**: GitHub Actions (scraper diario)
 
-## Instalación
+## Configuración inicial
+
+### 1. Supabase
+
+1. Crea un proyecto en [app.supabase.com](https://app.supabase.com)
+2. Ve a **SQL Editor** y ejecuta `supabase/schema.sql`
+3. Copia la URL y la anon key del proyecto
+
+### 2. Stripe
+
+1. Crea una cuenta en [stripe.com](https://stripe.com)
+2. Crea un producto "Premium" con precio recurrente (~$299 MXN/mes)
+3. Copia el `price_id` del precio creado
+4. Configura un webhook apuntando a `https://tu-dominio.vercel.app/api/webhook`
+   - Eventos: `checkout.session.completed`, `customer.subscription.deleted`
+
+### 3. Variables de entorno
 
 ```bash
-# 1. Entra al directorio frontend
 cd frontend
-
-# 2. Instala dependencias
-npm install
-
-# 3. Configura variables de entorno
 cp .env.example .env.local
-# Edita .env.local si es necesario
+# Edita .env.local con tus credenciales
+```
 
-# 4. Inicia en modo desarrollo
+Variables requeridas:
+
+| Variable               | Descripción                                     |
+|------------------------|-------------------------------------------------|
+| `SUPABASE_URL`         | URL de tu proyecto Supabase                     |
+| `SUPABASE_ANON_KEY`    | Anon key de Supabase                            |
+| `STRIPE_SECRET_KEY`    | Clave secreta de Stripe                         |
+| `STRIPE_WEBHOOK_SECRET`| Webhook secret de Stripe                        |
+| `STRIPE_PRICE_ID`      | ID del precio Premium en Stripe                 |
+| `NEXT_PUBLIC_APP_URL`  | URL pública de la app (para Stripe redirects)   |
+
+Variables opcionales:
+
+| Variable               | Default                                         | Descripción                |
+|------------------------|-------------------------------------------------|----------------------------|
+| `RATE_LIMIT_RPM`       | 30                                              | Requests por minuto / IP   |
+| `PJBC_BOLETIN_BASE`    | https://www.pjbc.gob.mx/boletinj                | Base URL del boletín PJBC  |
+| `RESEND_API_KEY`       | -                                               | API key de Resend (emails) |
+| `RESEND_FROM`          | -                                               | Email remitente de alertas |
+
+### 4. Instalación y desarrollo local
+
+```bash
+cd frontend
+npm install
 npm run dev
 ```
 
-La app estará disponible en http://localhost:3000
+La app estará en http://localhost:3000
 
-## Scripts disponibles
+## Deploy en Vercel
 
-```bash
-npm run dev      # Servidor de desarrollo
-npm run build    # Build de producción
-npm run start    # Servidor de producción (requiere build previo)
-npm run lint     # Linter
-```
+1. Conecta el repositorio en [vercel.com](https://vercel.com)
+2. Vercel detecta automáticamente `vercel.json` → usa `frontend/` como raíz
+3. Configura las variables de entorno en el dashboard de Vercel
+4. Deploy automático en cada push a `main`
 
-## Endpoints
+## GitHub Actions – Scraper automático
 
-### `GET /api/search`
+El scraper corre automáticamente cada día hábil a las 8 AM (hora Ciudad de México).
 
-Parámetros de query:
+Configurar secretos en **Settings → Secrets → Actions**:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 
-| Param       | Tipo   | Requerido | Descripción                        |
-|-------------|--------|-----------|------------------------------------|
-| ciudad      | string | ✅        | Ciudad (mexicali, tijuana, etc.)   |
-| expediente  | string | ❌        | Filtro por número de expediente    |
-| partes      | string | ❌        | Filtro por nombre de las partes    |
+Ejecutar manualmente: **Actions → Daily Boletín Scraper → Run workflow**
 
-**Ejemplo:**
-```
-GET /api/search?ciudad=mexicali&expediente=123
-```
+## Endpoints API
 
-**Respuesta:**
-```json
-{
-  "results": [
-    {
-      "id": 1,
-      "expediente": "123/2024",
-      "partes": "García López Juan vs. Martínez Sánchez Ana",
-      "juzgado": "Juzgado Primero Civil",
-      "ciudad": "mexicali",
-      "fecha": "2024-01-15",
-      "acuerdo": "Se admite la demanda."
-    }
-  ],
-  "total": 1,
-  "cached": false,
-  "fecha": "2024-01-15"
-}
-```
+| Endpoint             | Método | Descripción                                 | Plan    |
+|----------------------|--------|---------------------------------------------|---------|
+| `/api/search`        | GET    | Búsqueda por expediente y ciudad            | Gratis  |
+| `/api/name-search`   | GET    | Búsqueda por nombre de las partes           | Premium |
+| `/api/monitor`       | POST   | Agregar expediente a monitoreo              | Gratis* |
+| `/api/alerts`        | GET    | Obtener alertas del usuario                 | Gratis  |
+| `/api/subscribe`     | POST   | Iniciar checkout de suscripción Premium     | -       |
+| `/api/webhook`       | POST   | Webhook de Stripe (marcar usuario premium)  | -       |
 
-**Códigos de respuesta:**
-- `200` - OK
-- `400` - Parámetros inválidos
-- `429` - Rate limit excedido (30 req/min por IP)
-- `500` - Error interno
+*Plan gratis: 1 expediente monitoreable. Premium: ilimitado.
 
-## Scraper Python
+## Scraper Python (standalone)
 
 ```bash
 cd scraper
+
+# Una ciudad
 python scraper.py --ciudad mexicali
+
+# Todas las ciudades
+python scraper.py --all-cities
+
+# Con fecha específica
 python scraper.py --ciudad tijuana --fecha 2024-01-15 --output boletin.json
+
+# Guardar en Supabase directamente
+SUPABASE_URL=... SUPABASE_ANON_KEY=... python scraper.py --all-cities --supabase
 ```
 
-## Variables de entorno
+## Modelo de negocio
 
-| Variable          | Default                              | Descripción               |
-|-------------------|--------------------------------------|---------------------------|
-| RATE_LIMIT_RPM    | 30                                   | Requests por minuto / IP  |
-| PJBC_BOLETIN_URL  | https://www.pjbc.gob.mx/boletin/    | URL del boletín PJBC      |
-| API_SECRET_KEY    | (vacío)                              | Clave para endpoints admin|
-| DATA_DIR          | ./data                               | Directorio de datos SQLite|
+**Plan Gratis:**
+- Búsqueda por número de expediente
+- 1 expediente en monitoreo
 
-## Despliegue
+**Plan Premium ($299 MXN/mes):**
+- Búsqueda por nombre de las partes
+- Monitoreo ilimitado de expedientes
+- Alertas en tiempo real
 
-### Vercel
+## Semáforo de urgencia
 
-```bash
-# Desde el directorio frontend
-vercel --prod
-```
-
-### Railway / VPS
-
-```bash
-npm run build
-npm run start
-```
-
-## Seguridad
-
-- Validación de inputs con Zod
-- Rate limiting por IP (30 req/min)
-- Headers de seguridad (XSS, CSP, CORS, X-Frame-Options)
-- Sanitización de datos del scraper
-- Datos sensibles en variables de entorno
+| Color     | Significado                                          |
+|-----------|------------------------------------------------------|
+| 🔴 Rojo   | Emplazamiento, requerimiento, embargo, apercibimiento |
+| 🟡 Amarillo| Admisión, señalamiento, acuerdo, vinculación          |
+| 🟢 Verde  | Informativo, trámite rutinario                        |
 
 ## Estructura del proyecto
 
 ```
 .
-├── frontend/                 # Next.js app
+├── vercel.json              # Configuración Vercel (rootDirectory: frontend)
+├── supabase/
+│   └── schema.sql           # Schema SQL para Supabase
+├── frontend/                # Next.js app
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── page.tsx     # Página principal
 │   │   │   ├── layout.tsx   # Layout raíz
-│   │   │   ├── globals.css  # Estilos globales
 │   │   │   └── api/
-│   │   │       └── search/
-│   │   │           └── route.ts  # API endpoint
+│   │   │       ├── search/      # Búsqueda por expediente
+│   │   │       ├── name-search/ # Búsqueda por nombre (Premium)
+│   │   │       ├── monitor/     # Monitoreo de expedientes
+│   │   │       ├── alerts/      # Alertas del usuario
+│   │   │       ├── subscribe/   # Checkout Stripe
+│   │   │       └── webhook/     # Webhook Stripe
 │   │   └── lib/
-│   │       ├── db.ts        # SQLite
-│   │       ├── scraper.ts   # Scraper Node.js
+│   │       ├── supabase.ts  # Cliente Supabase
+│   │       ├── db.ts        # Operaciones de base de datos
+│   │       ├── scraper.ts   # Scraper TypeScript
 │   │       └── rateLimit.ts # Rate limiting
 │   ├── package.json
-│   ├── tsconfig.json
-│   ├── next.config.js
-│   ├── tailwind.config.ts
 │   └── .env.example
 ├── scraper/
-│   ├── scraper.py           # Scraper Python (standalone)
+│   ├── scraper.py           # Scraper Python (standalone + cron)
 │   └── requirements.txt
-└── README.md
+└── .github/
+    └── workflows/
+        └── scraper.yml      # GitHub Action: scraper diario
 ```
+

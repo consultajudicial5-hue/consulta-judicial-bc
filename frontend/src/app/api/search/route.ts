@@ -5,10 +5,8 @@ import { getExpedientes, upsertExpedientes, hasScrapeLog, recordScrapeLog } from
 import { scrapeBoletin } from '@/lib/scraper'
 
 // In-memory cache: city+date -> { data, timestamp }
-// NOTE: This cache is per-process. It will be cleared on serverless cold starts
-// and is not shared across multiple instances. For multi-instance production
-// deployments, replace with a shared cache (Redis, etc.).
-const cache = new Map<string, { data: ReturnType<typeof getExpedientes>; timestamp: number }>()
+// NOTE: Not shared across Vercel instances – acts as a warm-start optimisation only.
+const cache = new Map<string, { data: Awaited<ReturnType<typeof getExpedientes>>; timestamp: number }>()
 const CACHE_TTL = 30 * 60 * 1000 // 30 minutes
 
 const SearchSchema = z.object({
@@ -72,30 +70,38 @@ export async function GET(req: NextRequest) {
   let fromCache = !!rows
 
   if (!rows) {
-    // Check if already scraped today (in DB)
-    const alreadyScraped = hasScrapeLog(ciudad, fecha)
+    try {
+      // Check if already scraped today (in DB)
+      const alreadyScraped = await hasScrapeLog(ciudad, fecha)
 
-    if (!alreadyScraped) {
-      // Scrape
-      try {
-        const scraped = await scrapeBoletin(ciudad)
-        if (scraped.length > 0) {
-          upsertExpedientes(scraped)
+      if (!alreadyScraped) {
+        try {
+          const scraped = await scrapeBoletin(ciudad)
+          if (scraped.length > 0) {
+            await upsertExpedientes(scraped)
+          }
+          await recordScrapeLog(ciudad, fecha, 'ok', scraped.length)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error('[api/search] Scrape error:', msg)
+          await recordScrapeLog(ciudad, fecha, 'error', 0, msg)
         }
-        recordScrapeLog(ciudad, fecha, 'ok', scraped.length)
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error('[api/search] Scrape error:', msg)
-        recordScrapeLog(ciudad, fecha, 'error', 0, msg)
       }
-    }
 
-    rows = getExpedientes(ciudad, fecha)
-    cache.set(cacheKey, { data: rows, timestamp: Date.now() })
-    fromCache = false
+      rows = await getExpedientes(ciudad, fecha)
+      cache.set(cacheKey, { data: rows, timestamp: Date.now() })
+      fromCache = false
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[api/search] DB error:', msg)
+      return NextResponse.json(
+        { error: 'Error al consultar la base de datos. Verifica la configuración de Supabase.' },
+        { status: 500, headers }
+      )
+    }
   }
 
-  // Apply filters server-side too (for deep filtering)
+  // Apply filters server-side
   let filtered = rows
   if (expediente) {
     const expLower = expediente.toLowerCase()

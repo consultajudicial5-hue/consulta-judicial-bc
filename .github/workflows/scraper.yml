@@ -1,0 +1,38 @@
+name: Daily Boletín Scraper
+
+on:
+  schedule:
+    # Run every weekday at 8:00 AM Mexico City time (14:00 UTC)
+    - cron: '0 14 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      ciudad:
+        description: 'Ciudad a scrapear (leave empty for all)'
+        required: false
+        default: ''
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run scraper for all cities
+        env:
+          PJBC_BOLETIN_BASE: ${{ vars.PJBC_BOLETIN_BASE || 'https://www.pjbc.gob.mx/boletinj' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.ciudad }}" ]; then
+            echo "Scraping city: ${{ github.event.inputs.ciudad }}"
+            python scraper/scraper.py --ciudad "${{ github.event.inputs.ciudad }}" --supabase
+          else
+            echo "Scraping all cities"
+            python scraper/scraper.py --all-cities --supabase
+          fi

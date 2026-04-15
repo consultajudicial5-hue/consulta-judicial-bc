@@ -1,6 +1,8 @@
 import * as cheerio from 'cheerio'
 
-const PJBC_URL = process.env.PJBC_BOLETIN_URL ?? 'https://www.pjbc.gob.mx/boletin/'
+// Real PJBC boletín URL format:
+// https://www.pjbc.gob.mx/boletinj/YYYY/my_html/inYYMMDD.htm
+const PJBC_BASE = process.env.PJBC_BOLETIN_BASE ?? 'https://www.pjbc.gob.mx/boletinj'
 
 export interface ScrapedExpediente {
   expediente: string
@@ -9,10 +11,46 @@ export interface ScrapedExpediente {
   ciudad: string
   fecha: string
   acuerdo: string
+  semaforo: 'rojo' | 'amarillo' | 'verde'
+}
+
+const CIUDAD_KEYWORDS: Record<string, string[]> = {
+  mexicali: ['mexicali', 'mexl', 'mxl', 'san luis', 'algodones'],
+  tijuana: ['tijuana', 'tjuana', 'tj', 'playas de rosarito'],
+  ensenada: ['ensenada', 'ens', 'san quintin', 'san quintín'],
+  tecate: ['tecate'],
+  rosarito: ['rosarito', 'playas de rosarito'],
+}
+
+const ROJO_KEYWORDS = [
+  'emplazamiento', 'emplaza', 'requerimiento', 'requiere', 'requiérase',
+  'plazo', 'apercibimiento', 'apercibe', 'apercíbese', 'embargo',
+  'arresto', 'orden de aprehensión', 'aprehensión', 'lanzamiento',
+]
+
+const AMARILLO_KEYWORDS = [
+  'admisión', 'admite', 'se admite', 'admítase', 'auto de formal',
+  'vinculación a proceso', 'medida cautelar', 'señala', 'se señala',
+  'cítese', 'citar', 'citación', 'acuerdo', 'radicación',
+]
+
+export function clasificarSemaforo(acuerdo: string): 'rojo' | 'amarillo' | 'verde' {
+  const texto = acuerdo.toLowerCase()
+  if (ROJO_KEYWORDS.some(k => texto.includes(k))) return 'rojo'
+  if (AMARILLO_KEYWORDS.some(k => texto.includes(k))) return 'amarillo'
+  return 'verde'
 }
 
 function sanitizeText(text: string): string {
-  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim()
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim()
+}
+
+function buildBoletinUrl(date: Date): string {
+  const yy = String(date.getFullYear()).slice(2)
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  const yyyy = date.getFullYear()
+  return `${PJBC_BASE}/${yyyy}/my_html/in${yy}${mm}${dd}.htm`
 }
 
 function getTodayDate(): string {
@@ -23,66 +61,114 @@ function getTodayDate(): string {
   return `${y}-${m}-${day}`
 }
 
-export async function scrapeBoletin(ciudad: string): Promise<ScrapedExpediente[]> {
-  const fecha = getTodayDate()
-  const ciudadNorm = ciudad.toLowerCase().trim()
+function detectarCiudad(text: string, defaultCiudad: string): string {
+  const lower = text.toLowerCase()
+  for (const [ciudad, keywords] of Object.entries(CIUDAD_KEYWORDS)) {
+    if (keywords.some(k => lower.includes(k))) return ciudad
+  }
+  return defaultCiudad
+}
 
-  const url = `${PJBC_URL}?ciudad=${encodeURIComponent(ciudadNorm)}&fecha=${fecha}`
-
-  let html: string
+async function fetchHtml(url: string): Promise<string | null> {
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15_000)
+    const timeout = setTimeout(() => controller.abort(), 20_000)
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaJudicialBC/1.0 (+https://consultajudicial.bc)',
-        'Accept': 'text/html,application/xhtml+xml',
+        'User-Agent': 'MonitorJudicialBC/2.0 (+https://monitojudicial.bc)',
+        'Accept': 'text/html,application/xhtml+xml,*/*',
+        'Accept-Language': 'es-MX,es;q=0.9',
       },
     })
     clearTimeout(timeout)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    html = await res.text()
-  } catch (err: unknown) {
-    console.warn('[scraper] Could not reach PJBC, using demo data:', err instanceof Error ? err.message : err)
-    return getDemoData(ciudadNorm, fecha)
+    if (!res.ok) return null
+    // PJBC pages are often encoded in latin-1 / ISO-8859-1
+    const buffer = await res.arrayBuffer()
+    return new TextDecoder('latin1').decode(buffer)
+  } catch {
+    return null
   }
-
-  return parseBoletinHtml(html, ciudadNorm, fecha)
 }
 
-function parseBoletinHtml(html: string, ciudad: string, fecha: string): ScrapedExpediente[] {
+function parseBoletinHtml(html: string, ciudadFiltro: string, fecha: string): ScrapedExpediente[] {
   const $ = cheerio.load(html)
   const results: ScrapedExpediente[] = []
 
-  // Strategy 1: look for a common table structure
   $('table tr').each((_, row) => {
     const cells = $(row).find('td')
-    if (cells.length >= 3) {
-      const expediente = sanitizeText($(cells[0]).text())
-      const partes = sanitizeText($(cells[1]).text())
-      const juzgado = sanitizeText($(cells[2]).text())
-      const acuerdo = sanitizeText($(cells[3] ?? cells[2]).text())
-      if (expediente && /\d/.test(expediente)) {
-        results.push({ expediente, partes, juzgado, ciudad, fecha, acuerdo })
-      }
-    }
+    if (cells.length < 3) return
+
+    const col0 = sanitizeText($(cells[0]).text())
+    const col1 = sanitizeText($(cells[1]).text())
+    const col2 = sanitizeText($(cells[2]).text())
+    const col3 = cells.length > 3 ? sanitizeText($(cells[3]).text()) : ''
+
+    // Determine which column is the expediente (must contain digits and / or -)
+    const expedienteRaw = /\d/.test(col0) ? col0 : (/\d/.test(col1) ? col1 : '')
+    if (!expedienteRaw) return
+
+    const expediente = expedienteRaw
+    const partes = col0 !== expedienteRaw ? col0 : col1
+    const juzgado = col0 !== expedienteRaw ? col1 : col2
+    const acuerdo = col3 || (col0 !== expedienteRaw ? col2 : '')
+
+    if (!expediente) return
+
+    // Detect city from juzgado or acuerdo text
+    const ciudadDetectada = detectarCiudad(`${juzgado} ${acuerdo}`, ciudadFiltro)
+    if (ciudadDetectada !== ciudadFiltro) return // filter to requested city
+
+    const semaforo = clasificarSemaforo(acuerdo)
+    results.push({ expediente, partes, juzgado, ciudad: ciudadFiltro, fecha, acuerdo, semaforo })
   })
 
-  // Strategy 2: look for list items / divs if no table found
+  // Fallback: if nothing matched city filter, return all rows classified
   if (results.length === 0) {
-    $('.expediente, [data-expediente], .boletin-item').each((_, el) => {
-      const expediente = sanitizeText($(el).find('.numero, .expediente-num').text() || $(el).attr('data-expediente') || '')
-      const partes = sanitizeText($(el).find('.partes, .nombre').text())
-      const juzgado = sanitizeText($(el).find('.juzgado').text())
-      const acuerdo = sanitizeText($(el).find('.acuerdo, .resolucion').text())
-      if (expediente) {
-        results.push({ expediente, partes, juzgado, ciudad, fecha, acuerdo })
-      }
+    $('table tr').each((_, row) => {
+      const cells = $(row).find('td')
+      if (cells.length < 2) return
+      const col0 = sanitizeText($(cells[0]).text())
+      if (!col0 || !/\d/.test(col0)) return
+      const col1 = cells.length > 1 ? sanitizeText($(cells[1]).text()) : ''
+      const col2 = cells.length > 2 ? sanitizeText($(cells[2]).text()) : ''
+      const col3 = cells.length > 3 ? sanitizeText($(cells[3]).text()) : ''
+      const semaforo = clasificarSemaforo(col3 || col2)
+      results.push({
+        expediente: col0,
+        partes: col1,
+        juzgado: col2,
+        ciudad: ciudadFiltro,
+        fecha,
+        acuerdo: col3 || col2,
+        semaforo,
+      })
     })
   }
 
   return results
+}
+
+export async function scrapeBoletin(ciudad: string): Promise<ScrapedExpediente[]> {
+  const fecha = getTodayDate()
+  const ciudadNorm = ciudad.toLowerCase().trim()
+  const today = new Date()
+
+  // Try today's URL; if it fails, try yesterday (in case the boletín hasn't been published yet)
+  for (let daysBack = 0; daysBack <= 1; daysBack++) {
+    const d = new Date(today)
+    d.setDate(d.getDate() - daysBack)
+    const url = buildBoletinUrl(d)
+    console.info(`[scraper] Trying ${url}`)
+    const html = await fetchHtml(url)
+    if (html) {
+      const rows = parseBoletinHtml(html, ciudadNorm, fecha)
+      if (rows.length > 0) return rows
+    }
+  }
+
+  console.warn('[scraper] Could not fetch real PJBC data – using demo data')
+  return getDemoData(ciudadNorm, fecha)
 }
 
 function getDemoData(ciudad: string, fecha: string): ScrapedExpediente[] {
@@ -96,19 +182,23 @@ function getDemoData(ciudad: string, fecha: string): ScrapedExpediente[] {
   const juzs = juzgados[ciudad] ?? ['Juzgado de Primera Instancia']
   const nombres = ['García López Juan', 'Martínez Sánchez Ana', 'Rodríguez Pérez Luis', 'Hernández Torres María', 'López Ramírez Carlos']
   const acuerdos = [
-    'Se admite la demanda y se corre traslado.',
+    'Se admite la demanda y se corre traslado a la parte demandada.',
     'Se señala fecha para audiencia de desahogo de pruebas.',
-    'Se tiene por recibido el escrito y se ordena agregar.',
-    'Se dicta sentencia definitiva conforme a derecho.',
+    'Se tiene por recibido el escrito y se ordena agregar a autos.',
+    'Se requiere al actor para que señale domicilio para emplazamiento.',
     'Se decreta embargo precautorio sobre los bienes del demandado.',
   ]
 
-  return Array.from({ length: 8 }, (_, i) => ({
-    expediente: `${Math.floor(Math.random() * 900) + 100}/${new Date().getFullYear()}`,
-    partes: nombres[i % nombres.length],
-    juzgado: juzs[i % juzs.length],
-    ciudad,
-    fecha,
-    acuerdo: acuerdos[i % acuerdos.length],
-  }))
+  return Array.from({ length: 8 }, (_, i) => {
+    const acuerdo = acuerdos[i % acuerdos.length]
+    return {
+      expediente: `${Math.floor(Math.random() * 900) + 100}/${new Date().getFullYear()}`,
+      partes: nombres[i % nombres.length],
+      juzgado: juzs[i % juzs.length],
+      ciudad,
+      fecha,
+      acuerdo,
+      semaforo: clasificarSemaforo(acuerdo),
+    }
+  })
 }
