@@ -76,7 +76,7 @@ async function fetchHtml(url: string): Promise<string | null> {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'MonitorJudicialBC/2.0 (+https://monitojudicial.bc)',
+        'User-Agent': 'MonitorJudicialBC/2.0 (+https://monitorjudicial.bc)',
         'Accept': 'text/html,application/xhtml+xml,*/*',
         'Accept-Language': 'es-MX,es;q=0.9',
       },

@@ -98,7 +98,9 @@ class TableParser(HTMLParser):
 
 
 def sanitize(text: str) -> str:
-    return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", text).replace("\s+", " ").strip()
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', "", text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
 
 def detect_ciudad(text: str, default: str) -> str:
