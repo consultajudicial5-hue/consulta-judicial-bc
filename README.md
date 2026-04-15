@@ -94,7 +94,7 @@ python scraper.py --ciudad tijuana --fecha 2024-01-15 --output boletin.json
 | Variable          | Default                              | Descripción               |
 |-------------------|--------------------------------------|---------------------------|
 | RATE_LIMIT_RPM    | 30                                   | Requests por minuto / IP  |
-| PJBC_BOLETIN_URL  | https://www.pjbc.gob.mx/boletin/    | URL del boletín PJBC      |
+| PJBC_BOLETIN_URL  | https://www.pjbc.gob.mx/boletin_Judicial.aspx | URL del boletín PJBC      |
 | API_SECRET_KEY    | (vacío)                              | Clave para endpoints admin|
 | DATA_DIR          | ./data                               | Directorio de datos SQLite|
 

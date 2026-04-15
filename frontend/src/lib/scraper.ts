@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio'
 
-const PJBC_URL = process.env.PJBC_BOLETIN_URL ?? 'https://www.pjbc.gob.mx/boletin/'
+const PJBC_URL = process.env.PJBC_BOLETIN_URL ?? 'https://www.pjbc.gob.mx/boletin_Judicial.aspx'
 
 export interface ScrapedExpediente {
   expediente: string
@@ -23,39 +23,131 @@ function getTodayDate(): string {
   return `${y}-${m}-${day}`
 }
 
+/** Convert ISO date (YYYY-MM-DD) to DD/MM/YYYY used by ASPX forms. */
+function toMexicanDate(isoDate: string): string {
+  const [y, m, day] = isoDate.split('-')
+  return `${day}/${m}/${y}`
+}
+
+async function fetchWithTimeout(url: string, opts: RequestInit = {}, timeoutMs = 15_000): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Extract the hidden ASP.NET form fields (__VIEWSTATE, __VIEWSTATEGENERATOR,
+ * __EVENTVALIDATION) and discover the city dropdown + date input names, then
+ * return a URLSearchParams-ready record ready for a POST submission.
+ */
+function buildAspxFormData(html: string, ciudad: string, fechaIso: string): Record<string, string> {
+  const $ = cheerio.load(html)
+  const fields: Record<string, string> = {}
+
+  // Collect all hidden inputs (includes __VIEWSTATE, __EVENTVALIDATION, etc.)
+  $('input[type="hidden"]').each((_, el) => {
+    const name = $(el).attr('name')
+    const value = $(el).attr('value') ?? ''
+    if (name) fields[name] = value
+  })
+
+  // Discover the city <select> – pick the option whose text/value matches the city
+  $('select').each((_, sel) => {
+    const selName = $(sel).attr('name')
+    if (!selName) return
+    let matched = false
+    $(sel).find('option').each((_, opt) => {
+      const optVal = $(opt).attr('value') ?? ''
+      const optText = $(opt).text().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      const ciudadNorm = ciudad.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      if (
+        optVal.toLowerCase() === ciudadNorm ||
+        optText.includes(ciudadNorm)
+      ) {
+        fields[selName] = optVal
+        matched = true
+        return false // break
+      }
+    })
+    // If no match yet, preserve whatever default was selected
+    if (!matched && !fields[selName]) {
+      const selected = $(sel).find('option[selected]').attr('value') ?? $(sel).find('option').first().attr('value') ?? ''
+      fields[selName] = selected
+    }
+  })
+
+  // Discover the date <input type="text"> that is likely the date field
+  $('input[type="text"], input:not([type])').each((_, inp) => {
+    const name = $(inp).attr('name') ?? ''
+    const id = $(inp).attr('id') ?? ''
+    if (/fecha|date|fec/i.test(name + id)) {
+      fields[name] = toMexicanDate(fechaIso)
+    }
+  })
+
+  // Include submit button value so the server recognises a postback
+  const btn = $('input[type="submit"], input[type="button"][id*="Buscar"], input[type="button"][id*="buscar"]').first()
+  if (btn.length) {
+    const btnName = btn.attr('name')
+    if (btnName) fields[btnName] = btn.attr('value') ?? 'Buscar'
+  }
+
+  // Required ASP.NET postback fields
+  fields['__EVENTTARGET'] = fields['__EVENTTARGET'] ?? ''
+  fields['__EVENTARGUMENT'] = fields['__EVENTARGUMENT'] ?? ''
+
+  return fields
+}
+
 export async function scrapeBoletin(ciudad: string): Promise<ScrapedExpediente[]> {
   const fecha = getTodayDate()
   const ciudadNorm = ciudad.toLowerCase().trim()
 
-  const url = `${PJBC_URL}?ciudad=${encodeURIComponent(ciudadNorm)}&fecha=${fecha}`
-
-  let html: string
   try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15_000)
-    const res = await fetch(url, {
-      signal: controller.signal,
+    const commonHeaders = {
+      'User-Agent': 'ConsultaJudicialBC/1.0 (+https://consultajudicial.bc)',
+      'Accept': 'text/html,application/xhtml+xml',
+    }
+
+    // Step 1: GET the page to obtain ASP.NET viewstate and discover form controls
+    const getRes = await fetchWithTimeout(PJBC_URL, { headers: commonHeaders })
+    if (!getRes.ok) throw new Error(`HTTP ${getRes.status} on GET`)
+    const getHtml = await getRes.text()
+
+    // Step 2: Build the POST body (viewstate + city + date)
+    const formData = buildAspxFormData(getHtml, ciudadNorm, fecha)
+
+    // Step 3: POST the form back to the same URL
+    const postRes = await fetchWithTimeout(PJBC_URL, {
+      method: 'POST',
       headers: {
-        'User-Agent': 'ConsultaJudicialBC/1.0 (+https://consultajudicial.bc)',
-        'Accept': 'text/html,application/xhtml+xml',
+        ...commonHeaders,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': PJBC_URL,
       },
+      body: new URLSearchParams(formData).toString(),
     })
-    clearTimeout(timeout)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    html = await res.text()
+    if (!postRes.ok) throw new Error(`HTTP ${postRes.status} on POST`)
+    const html = await postRes.text()
+
+    const results = parseBoletinHtml(html, ciudadNorm, fecha)
+    if (results.length > 0) return results
   } catch (err: unknown) {
     console.warn('[scraper] Could not reach PJBC, using demo data:', err instanceof Error ? err.message : err)
-    return getDemoData(ciudadNorm, fecha)
   }
 
-  return parseBoletinHtml(html, ciudadNorm, fecha)
+  return getDemoData(ciudadNorm, fecha)
 }
 
 function parseBoletinHtml(html: string, ciudad: string, fecha: string): ScrapedExpediente[] {
   const $ = cheerio.load(html)
   const results: ScrapedExpediente[] = []
 
-  // Strategy 1: look for a common table structure
+  // Strategy 1: look for a common table structure (ASP.NET GridView renders as <table>)
   $('table tr').each((_, row) => {
     const cells = $(row).find('td')
     if (cells.length >= 3) {
