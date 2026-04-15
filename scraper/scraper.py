@@ -149,7 +149,7 @@ def build_post_data(html: str, ciudad: str, fecha_iso: str) -> dict:
     # Discover date text input
     fecha_mex = _to_mexican_date(fecha_iso)
     for inp_name, (inp_id, _) in fp.text_inputs.items():
-        if re.search(r"fecha|date|fec", inp_name + inp_id, re.IGNORECASE):
+        if re.search(r"\b(fecha|date)\b", inp_name + inp_id, re.IGNORECASE):
             fields[inp_name] = fecha_mex
 
     # Include the first submit button so the server recognises the postback

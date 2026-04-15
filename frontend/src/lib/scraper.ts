@@ -39,6 +39,10 @@ async function fetchWithTimeout(url: string, opts: RequestInit = {}, timeoutMs =
   }
 }
 
+function normalizeAccents(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
 /**
  * Extract the hidden ASP.NET form fields (__VIEWSTATE, __VIEWSTATEGENERATOR,
  * __EVENTVALIDATION) and discover the city dropdown + date input names, then
@@ -56,19 +60,16 @@ function buildAspxFormData(html: string, ciudad: string, fechaIso: string): Reco
   })
 
   // Discover the city <select> – pick the option whose text/value matches the city
+  const ciudadNorm = normalizeAccents(ciudad)
   $('select').each((_, sel) => {
     const selName = $(sel).attr('name')
     if (!selName) return
     let matched = false
     $(sel).find('option').each((_, opt) => {
-      const optVal = $(opt).attr('value') ?? ''
-      const optText = $(opt).text().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      const ciudadNorm = ciudad.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      if (
-        optVal.toLowerCase() === ciudadNorm ||
-        optText.includes(ciudadNorm)
-      ) {
-        fields[selName] = optVal
+      const optVal = normalizeAccents($(opt).attr('value') ?? '')
+      const optText = normalizeAccents($(opt).text())
+      if (optVal === ciudadNorm || optText.includes(ciudadNorm)) {
+        fields[selName] = $(opt).attr('value') ?? ''
         matched = true
         return false // break
       }
@@ -84,7 +85,7 @@ function buildAspxFormData(html: string, ciudad: string, fechaIso: string): Reco
   $('input[type="text"], input:not([type])').each((_, inp) => {
     const name = $(inp).attr('name') ?? ''
     const id = $(inp).attr('id') ?? ''
-    if (/fecha|date|fec/i.test(name + id)) {
+    if (/\b(fecha|date)\b/i.test(name + id)) {
       fields[name] = toMexicanDate(fechaIso)
     }
   })
