@@ -12,13 +12,31 @@ const nextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
           {
             key: 'Content-Security-Policy',
-            // 'unsafe-eval' is required only in development (Next.js hot-reload).
-            // In production builds, Next.js does not need it.
             value: process.env.NODE_ENV === 'development'
               ? "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';"
               : "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';"
           },
         ],
+      },
+    ]
+  },
+  async rewrites() {
+    return [
+      {
+        source: '/api/monitor/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/monitor/:path*`,
+      },
+      {
+        source: '/api/analyze',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/analyze`,
+      },
+      {
+        source: '/api/remates',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/remates`,
+      },
+      {
+        source: '/api/documents/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/documents/:path*`,
       },
     ]
   },
