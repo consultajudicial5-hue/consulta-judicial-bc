@@ -50,6 +50,19 @@ function getTodayDate(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/**
+ * Returns up to `maxVisible` page numbers centered around `currentPage`,
+ * clamped within [1, totalPages]. Used to render a sliding-window pagination bar.
+ */
+function getPaginationPageNumbers(currentPage: number, totalPages: number, maxVisible = 5): number[] {
+  const half = Math.floor(maxVisible / 2)
+  // Compute the ideal start, then clamp the end, then re-clamp the start
+  let start = Math.max(1, currentPage - half)
+  const end = Math.min(totalPages, start + maxVisible - 1)
+  start = Math.max(1, end - maxVisible + 1)
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i)
+}
+
 export default function HomePage() {
   const [ciudad, setCiudad] = useState('')
   const [expediente, setExpediente] = useState('')
@@ -303,13 +316,7 @@ export default function HomePage() {
                 >
                   ← Anterior
                 </button>
-                {Array.from({ length: Math.min(5, meta.totalPages) }, (_, i) => {
-                  const half = 2
-                  let start = Math.max(1, meta.page - half)
-                  const end = Math.min(meta.totalPages, start + 4)
-                  start = Math.max(1, end - 4)
-                  return start + i
-                }).filter(p => p >= 1 && p <= meta.totalPages).map(p => (
+                {getPaginationPageNumbers(meta.page, meta.totalPages).map(p => (
                   <button
                     key={p}
                     onClick={() => handlePageChange(p)}
