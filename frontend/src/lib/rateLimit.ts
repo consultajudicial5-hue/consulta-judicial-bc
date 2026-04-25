@@ -1,3 +1,10 @@
+// In-memory rate limiter (per-process).
+//
+// NOTE: This implementation is not shared across serverless function instances.
+// Each cold start (e.g. on Vercel) resets all counters, so the effective limit
+// per user is "RPM per instance" rather than "RPM globally". For a true
+// distributed rate limit, replace this with an Upstash Redis-backed solution
+// using @upstash/ratelimit + @upstash/redis, or Vercel KV.
 interface RateLimitEntry {
   count: number
   resetAt: number

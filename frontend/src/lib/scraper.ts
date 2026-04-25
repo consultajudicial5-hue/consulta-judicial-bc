@@ -23,11 +23,23 @@ function getTodayDate(): string {
   return `${y}-${m}-${day}`
 }
 
-export async function scrapeBoletin(ciudad: string): Promise<ScrapedExpediente[]> {
-  const fecha = getTodayDate()
+/**
+ * Simple deterministic hash from a string → unsigned 32-bit integer.
+ * Used to make demo data stable for the same city+date pair.
+ */
+function hashString(s: string): number {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619)
+  }
+  return h >>> 0
+}
+
+export async function scrapeBoletin(ciudad: string, fecha?: string): Promise<ScrapedExpediente[]> {
+  const fechaStr = fecha ?? getTodayDate()
   const ciudadNorm = ciudad.toLowerCase().trim()
 
-  const url = `${PJBC_URL}?ciudad=${encodeURIComponent(ciudadNorm)}&fecha=${fecha}`
+  const url = `${PJBC_URL}?ciudad=${encodeURIComponent(ciudadNorm)}&fecha=${fechaStr}`
 
   let html: string
   try {
@@ -41,17 +53,26 @@ export async function scrapeBoletin(ciudad: string): Promise<ScrapedExpediente[]
       },
     })
     clearTimeout(timeout)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      const snippet = (await res.text()).slice(0, 200)
+      console.warn(`[scraper] HTTP ${res.status} for ${url} — response: ${snippet}`)
+      throw new Error(`HTTP ${res.status}`)
+    }
     html = await res.text()
   } catch (err: unknown) {
     console.warn('[scraper] Could not reach PJBC, using demo data:', err instanceof Error ? err.message : err)
-    return getDemoData(ciudadNorm, fecha)
+    return getDemoData(ciudadNorm, fechaStr)
   }
 
-  return parseBoletinHtml(html, ciudadNorm, fecha)
+  const results = parseBoletinHtml(html, ciudadNorm, fechaStr)
+  if (results.length === 0) {
+    console.warn(`[scraper] No records parsed from ${url} (HTML length: ${html.length}). Falling back to demo data.`)
+    return getDemoData(ciudadNorm, fechaStr)
+  }
+  return results
 }
 
-function parseBoletinHtml(html: string, ciudad: string, fecha: string): ScrapedExpediente[] {
+export function parseBoletinHtml(html: string, ciudad: string, fecha: string): ScrapedExpediente[] {
   const $ = cheerio.load(html)
   const results: ScrapedExpediente[] = []
 
@@ -103,12 +124,19 @@ function getDemoData(ciudad: string, fecha: string): ScrapedExpediente[] {
     'Se decreta embargo precautorio sobre los bienes del demandado.',
   ]
 
-  return Array.from({ length: 8 }, (_, i) => ({
-    expediente: `${Math.floor(Math.random() * 900) + 100}/${new Date().getFullYear()}`,
-    partes: nombres[i % nombres.length],
-    juzgado: juzs[i % juzs.length],
-    ciudad,
-    fecha,
-    acuerdo: acuerdos[i % acuerdos.length],
-  }))
+  // Use a deterministic seed from ciudad+fecha so demo data is stable across requests
+  const seed = hashString(`${ciudad}:${fecha}`)
+  const year = fecha.slice(0, 4)
+
+  return Array.from({ length: 8 }, (_, i) => {
+    const num = 100 + ((seed + i * 97) % 900)
+    return {
+      expediente: `${num}/${year}`,
+      partes: nombres[i % nombres.length],
+      juzgado: juzs[i % juzs.length],
+      ciudad,
+      fecha,
+      acuerdo: acuerdos[i % acuerdos.length],
+    }
+  })
 }

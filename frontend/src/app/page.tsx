@@ -15,9 +15,23 @@ interface Expediente {
 interface SearchResponse {
   results: Expediente[]
   total: number
+  filteredTotal: number
+  page: number
+  pageSize: number
+  totalPages: number
   cached: boolean
   fecha: string
   error?: string
+}
+
+interface SearchMeta {
+  total: number
+  filteredTotal: number
+  page: number
+  pageSize: number
+  totalPages: number
+  cached: boolean
+  fecha: string
 }
 
 const CIUDADES = [
@@ -29,26 +43,43 @@ const CIUDADES = [
   { value: 'rosarito', label: 'Rosarito' },
 ]
 
+const PAGE_SIZE = 25
+
+function getTodayDate(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export default function HomePage() {
   const [ciudad, setCiudad] = useState('')
   const [expediente, setExpediente] = useState('')
   const [partes, setPartes] = useState('')
+  const [fecha, setFecha] = useState(getTodayDate())
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<Expediente[]>([])
-  const [filteredResults, setFilteredResults] = useState<Expediente[]>([])
-  const [meta, setMeta] = useState<{ total: number; cached: boolean; fecha: string } | null>(null)
+  const [meta, setMeta] = useState<SearchMeta | null>(null)
   const [error, setError] = useState('')
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
 
-  const search = useCallback(async (params: { ciudad: string; expediente?: string; partes?: string }) => {
+  const search = useCallback(async (params: {
+    ciudad: string
+    expediente?: string
+    partes?: string
+    fecha?: string
+    page?: number
+  }) => {
     if (!params.ciudad) return
     setLoading(true)
     setError('')
     try {
       const qs = new URLSearchParams()
-      if (params.ciudad) qs.set('ciudad', params.ciudad)
+      qs.set('ciudad', params.ciudad)
       if (params.expediente) qs.set('expediente', params.expediente)
       if (params.partes) qs.set('partes', params.partes)
+      if (params.fecha) qs.set('fecha', params.fecha)
+      qs.set('page', String(params.page ?? 1))
+      qs.set('pageSize', String(PAGE_SIZE))
 
       const res = await fetch(`/api/search?${qs.toString()}`)
       if (!res.ok) {
@@ -57,48 +88,65 @@ export default function HomePage() {
       }
       const data: SearchResponse = await res.json()
       setResults(data.results)
-      setFilteredResults(data.results)
-      setMeta({ total: data.total, cached: data.cached, fecha: data.fecha })
+      setMeta({
+        total: data.total,
+        filteredTotal: data.filteredTotal,
+        page: data.page,
+        pageSize: data.pageSize,
+        totalPages: data.totalPages,
+        cached: data.cached,
+        fecha: data.fecha,
+      })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido'
       setError(msg)
       setResults([])
-      setFilteredResults([])
+      setMeta(null)
     } finally {
       setLoading(false)
     }
   }, [])
 
-  // Auto-search when city changes
+  // Auto-search when city or date changes (reset to page 1)
   useEffect(() => {
     if (ciudad) {
-      search({ ciudad, expediente: expediente || undefined, partes: partes || undefined })
+      setPage(1)
+      search({ ciudad, expediente: expediente || undefined, partes: partes || undefined, fecha, page: 1 })
     } else {
       setResults([])
-      setFilteredResults([])
       setMeta(null)
     }
-  }, [ciudad, search])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ciudad, fecha, search])
 
-  // Real-time filter on expediente / partes (client-side, no extra request if results already loaded)
+  // Debounced re-search when text filters change (reset to page 1)
   useEffect(() => {
-    if (!results.length) return
+    if (!ciudad) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      const expLower = expediente.toLowerCase().trim()
-      const partesLower = partes.toLowerCase().trim()
-      const filtered = results.filter(r => {
-        const matchExp = expLower ? r.expediente.toLowerCase().includes(expLower) : true
-        const matchPartes = partesLower ? r.partes.toLowerCase().includes(partesLower) : true
-        return matchExp && matchPartes
-      })
-      setFilteredResults(filtered)
-    }, 200)
-  }, [expediente, partes, results])
+      setPage(1)
+      search({ ciudad, expediente: expediente || undefined, partes: partes || undefined, fecha, page: 1 })
+    }, 300)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expediente, partes])
+
+  // Re-search when page changes
+  useEffect(() => {
+    if (ciudad && meta) {
+      search({ ciudad, expediente: expediente || undefined, partes: partes || undefined, fecha, page })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page])
 
   const handleManualSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    search({ ciudad, expediente: expediente || undefined, partes: partes || undefined })
+    setPage(1)
+    search({ ciudad, expediente: expediente || undefined, partes: partes || undefined, fecha, page: 1 })
+  }
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   return (
@@ -111,7 +159,7 @@ export default function HomePage() {
 
       {/* Search Form */}
       <form onSubmit={handleManualSearch} className="bg-white rounded-xl shadow p-6 mb-6" noValidate>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Ciudad */}
           <div>
             <label htmlFor="ciudad" className="block text-sm font-medium text-gray-700 mb-1">
@@ -127,6 +175,21 @@ export default function HomePage() {
                 <option key={c.value} value={c.value}>{c.label}</option>
               ))}
             </select>
+          </div>
+
+          {/* Fecha */}
+          <div>
+            <label htmlFor="fecha" className="block text-sm font-medium text-gray-700 mb-1">
+              Fecha del Boletín
+            </label>
+            <input
+              id="fecha"
+              type="date"
+              value={fecha}
+              max={getTodayDate()}
+              onChange={e => setFecha(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
           {/* Expediente */}
@@ -172,7 +235,7 @@ export default function HomePage() {
           </button>
           {meta && (
             <span className="text-sm text-gray-500">
-              {filteredResults.length} de {meta.total} resultado(s) · Boletín: {meta.fecha}
+              {meta.filteredTotal} de {meta.total} resultado(s) · Boletín: {meta.fecha}
               {meta.cached && <span className="ml-2 text-green-600">(caché)</span>}
             </span>
           )}
@@ -196,7 +259,7 @@ export default function HomePage() {
       )}
 
       {/* Results Table */}
-      {!loading && filteredResults.length > 0 && (
+      {!loading && results.length > 0 && (
         <div className="bg-white rounded-xl shadow overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -211,7 +274,7 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredResults.map((r, idx) => (
+                {results.map((r, idx) => (
                   <tr key={r.id ?? idx} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">{r.expediente}</td>
                     <td className="px-4 py-3 max-w-xs truncate" title={r.partes}>{r.partes}</td>
@@ -224,19 +287,60 @@ export default function HomePage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {meta && meta.totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+              <span className="text-sm text-gray-500">
+                Página {meta.page} de {meta.totalPages}
+                {' '}({meta.filteredTotal} resultados)
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handlePageChange(meta.page - 1)}
+                  disabled={meta.page <= 1}
+                  className="px-3 py-1 text-sm rounded border border-gray-300 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ← Anterior
+                </button>
+                {Array.from({ length: Math.min(5, meta.totalPages) }, (_, i) => {
+                  const half = 2
+                  let start = Math.max(1, meta.page - half)
+                  const end = Math.min(meta.totalPages, start + 4)
+                  start = Math.max(1, end - 4)
+                  return start + i
+                }).filter(p => p >= 1 && p <= meta.totalPages).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => handlePageChange(p)}
+                    className={`px-3 py-1 text-sm rounded border ${p === meta.page ? 'bg-blue-700 text-white border-blue-700' : 'border-gray-300 hover:bg-gray-100'}`}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button
+                  onClick={() => handlePageChange(meta.page + 1)}
+                  disabled={meta.page >= meta.totalPages}
+                  className="px-3 py-1 text-sm rounded border border-gray-300 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Empty state */}
-      {!loading && !error && ciudad && filteredResults.length === 0 && results.length > 0 && (
+      {!loading && !error && ciudad && results.length === 0 && meta && meta.filteredTotal === 0 && meta.total > 0 && (
         <div className="text-center py-12 text-gray-500">
           No se encontraron expedientes con ese filtro.
         </div>
       )}
 
-      {!loading && !error && ciudad && results.length === 0 && meta && (
+      {!loading && !error && ciudad && meta && meta.total === 0 && (
         <div className="text-center py-12 text-gray-500">
-          No hay expedientes publicados para {ciudad} en el boletín de hoy.
+          No hay expedientes publicados para {ciudad} en el boletín del {fecha}.
         </div>
       )}
 

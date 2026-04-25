@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { checkRateLimit } from '@/lib/rateLimit'
-import { getExpedientes, upsertExpedientes, hasScrapeLog, recordScrapeLog } from '@/lib/db'
+import { getExpedientes, upsertExpedientes, hasScrapeLog, recordScrapeLog, ExpedienteRow } from '@/lib/db'
 import { scrapeBoletin } from '@/lib/scraper'
 
 // In-memory cache: city+date -> { data, timestamp }
 // NOTE: This cache is per-process. It will be cleared on serverless cold starts
 // and is not shared across multiple instances. For multi-instance production
 // deployments, replace with a shared cache (Redis, etc.).
-const cache = new Map<string, { data: ReturnType<typeof getExpedientes>; timestamp: number }>()
+const cache = new Map<string, { data: ExpedienteRow[]; timestamp: number }>()
 const CACHE_TTL = 30 * 60 * 1000 // 30 minutes
+
+const MAX_LOOKBACK_DAYS = 90
+const DEFAULT_PAGE_SIZE = 25
+
+function isValidDate(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s))
+}
 
 const SearchSchema = z.object({
   ciudad: z.string()
@@ -19,6 +26,9 @@ const SearchSchema = z.object({
     .transform(v => v.toLowerCase().trim()),
   expediente: z.string().max(100).optional().default(''),
   partes: z.string().max(200).optional().default(''),
+  fecha: z.string().optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(DEFAULT_PAGE_SIZE),
 })
 
 function getTodayDate(): string {
@@ -52,6 +62,9 @@ export async function GET(req: NextRequest) {
     ciudad: req.nextUrl.searchParams.get('ciudad') ?? '',
     expediente: req.nextUrl.searchParams.get('expediente') ?? '',
     partes: req.nextUrl.searchParams.get('partes') ?? '',
+    fecha: req.nextUrl.searchParams.get('fecha') ?? undefined,
+    page: req.nextUrl.searchParams.get('page') ?? '1',
+    pageSize: req.nextUrl.searchParams.get('pageSize') ?? String(DEFAULT_PAGE_SIZE),
   }
 
   const parsed = SearchSchema.safeParse(raw)
@@ -62,8 +75,29 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const { ciudad, expediente, partes } = parsed.data
-  const fecha = getTodayDate()
+  const { ciudad, expediente, partes, page, pageSize } = parsed.data
+  const today = getTodayDate()
+
+  // Validate and bound the date parameter
+  let fecha = today
+  if (parsed.data.fecha) {
+    const f = parsed.data.fecha
+    if (!isValidDate(f)) {
+      return NextResponse.json({ error: 'Fecha inválida. Usa formato YYYY-MM-DD.' }, { status: 400, headers })
+    }
+    if (f > today) {
+      return NextResponse.json({ error: 'La fecha no puede ser futura.' }, { status: 400, headers })
+    }
+    const diffDays = (Date.now() - Date.parse(f)) / 86_400_000
+    if (diffDays > MAX_LOOKBACK_DAYS) {
+      return NextResponse.json(
+        { error: `No se pueden consultar fechas anteriores a ${MAX_LOOKBACK_DAYS} días.` },
+        { status: 400, headers }
+      )
+    }
+    fecha = f
+  }
+
   const cacheKey = `${ciudad}:${fecha}`
 
   // Check in-memory cache first
@@ -73,29 +107,43 @@ export async function GET(req: NextRequest) {
 
   if (!rows) {
     // Check if already scraped today (in DB)
-    const alreadyScraped = hasScrapeLog(ciudad, fecha)
+    let alreadyScraped = false
+    try {
+      alreadyScraped = await hasScrapeLog(ciudad, fecha)
+    } catch (err) {
+      console.error('[api/search] hasScrapeLog error:', err)
+    }
 
     if (!alreadyScraped) {
       // Scrape
       try {
-        const scraped = await scrapeBoletin(ciudad)
+        const scraped = await scrapeBoletin(ciudad, fecha)
         if (scraped.length > 0) {
-          upsertExpedientes(scraped)
+          await upsertExpedientes(scraped)
         }
-        recordScrapeLog(ciudad, fecha, 'ok', scraped.length)
+        await recordScrapeLog(ciudad, fecha, 'ok', scraped.length)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         console.error('[api/search] Scrape error:', msg)
-        recordScrapeLog(ciudad, fecha, 'error', 0, msg)
+        try {
+          await recordScrapeLog(ciudad, fecha, 'error', 0, msg)
+        } catch {
+          // ignore logging failure
+        }
       }
     }
 
-    rows = getExpedientes(ciudad, fecha)
+    try {
+      rows = await getExpedientes(ciudad, fecha)
+    } catch (err) {
+      console.error('[api/search] getExpedientes error:', err)
+      return NextResponse.json({ error: 'Error al consultar la base de datos.' }, { status: 500, headers })
+    }
     cache.set(cacheKey, { data: rows, timestamp: Date.now() })
     fromCache = false
   }
 
-  // Apply filters server-side too (for deep filtering)
+  // Apply filters server-side
   let filtered = rows
   if (expediente) {
     const expLower = expediente.toLowerCase()
@@ -106,8 +154,23 @@ export async function GET(req: NextRequest) {
     filtered = filtered.filter(r => r.partes.toLowerCase().includes(partesLower))
   }
 
+  // Paginate
+  const filteredTotal = filtered.length
+  const start = (page - 1) * pageSize
+  const pageResults = filtered.slice(start, start + pageSize)
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize))
+
   return NextResponse.json(
-    { results: filtered, total: rows.length, cached: fromCache, fecha },
+    {
+      results: pageResults,
+      total: rows.length,
+      filteredTotal,
+      page,
+      pageSize,
+      totalPages,
+      cached: fromCache,
+      fecha,
+    },
     { status: 200, headers }
   )
 }

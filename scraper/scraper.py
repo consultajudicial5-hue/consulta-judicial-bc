@@ -109,7 +109,10 @@ def scrape(ciudad: str, fecha: str) -> list[dict]:
 
 
 def get_demo_data(ciudad: str, fecha: str) -> list[dict]:
-    import random
+    """Return deterministic demo data seeded by ciudad+fecha."""
+    import hashlib
+    seed = int(hashlib.md5(f"{ciudad}:{fecha}".encode()).hexdigest(), 16)
+
     juzgados = {
         "mexicali": ["Juzgado Primero Civil", "Juzgado Segundo Penal", "Juzgado Tercero Familiar"],
         "tijuana": ["Juzgado Primero Civil", "Juzgado Quinto Penal", "Juzgado Segundo Familiar"],
@@ -130,7 +133,7 @@ def get_demo_data(ciudad: str, fecha: str) -> list[dict]:
     year = fecha[:4]
     return [
         {
-            "expediente": f"{random.randint(100, 999)}/{year}",
+            "expediente": f"{100 + ((seed + i * 97) % 900)}/{year}",
             "partes": nombres[i % len(nombres)],
             "juzgado": juzs[i % len(juzs)],
             "ciudad": ciudad,
