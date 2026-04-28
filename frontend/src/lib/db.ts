@@ -1,30 +1,23 @@
-// Uses Node.js built-in sqlite (available since Node.js 22+).
-// require() is used instead of import because 'node:sqlite' is not yet
-// in Node's type definitions and must be loaded as a CommonJS module.
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
-const { DatabaseSync } = require('node:sqlite') as any
+import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 
 const DATA_DIR = process.env.DATA_DIR ?? './data'
 const DB_PATH = path.resolve(DATA_DIR, 'boletin.db')
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type NodeSqliteDb = any
+let db: Database.Database | null = null
 
-let db: NodeSqliteDb | null = null
-
-function getDb(): NodeSqliteDb {
+function getDb(): Database.Database {
   if (db) return db
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
-  db = new DatabaseSync(DB_PATH)
-  db.exec('PRAGMA journal_mode = WAL')
-  db.exec('PRAGMA foreign_keys = ON')
+  db = new Database(DB_PATH)
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
   initSchema(db)
   return db
 }
 
-function initSchema(db: NodeSqliteDb) {
+function initSchema(db: Database.Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS expedientes (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,19 +78,12 @@ export function upsertExpedientes(rows: Omit<ExpedienteRow, 'id'>[]): number {
       acuerdo = excluded.acuerdo,
       scraped_at = datetime('now')
   `)
-  const begin = db.prepare('BEGIN')
-  const commit = db.prepare('COMMIT')
-  const rollback = db.prepare('ROLLBACK')
-  begin.run()
-  try {
-    for (const row of rows) {
+  const insertMany = db.transaction((items: Omit<ExpedienteRow, 'id'>[]) => {
+    for (const row of items) {
       stmt.run(row.expediente, row.partes, row.juzgado, row.ciudad, row.fecha, row.acuerdo)
     }
-    commit.run()
-  } catch (e) {
-    rollback.run()
-    throw e
-  }
+  })
+  insertMany(rows)
   return rows.length
 }
 
