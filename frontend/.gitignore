@@ -15,6 +15,9 @@ dist/
 # SQLite data
 data/
 
+# Testing
+coverage/
+
 # OS
 .DS_Store
 
