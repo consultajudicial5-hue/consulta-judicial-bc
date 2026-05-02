@@ -36,7 +36,53 @@ npm run dev      # Servidor de desarrollo
 npm run build    # Build de producción
 npm run start    # Servidor de producción (requiere build previo)
 npm run lint     # Linter
+npm test         # Ejecutar tests con Vitest
+npm run test:ui  # Ejecutar tests con interfaz visual
+npm run test:coverage # Ejecutar tests con reporte de cobertura
 ```
+
+## Tests
+
+El proyecto utiliza [Vitest](https://vitest.dev/) como framework de testing. Los tests están ubicados junto a sus módulos correspondientes con la extensión `.test.ts`.
+
+### Ejecutar tests
+
+```bash
+# Ejecutar todos los tests
+npm test
+
+# Ejecutar tests en modo watch
+npm test -- --watch
+
+# Ejecutar tests con UI interactiva
+npm run test:ui
+
+# Ejecutar tests con reporte de cobertura
+npm run test:coverage
+```
+
+### Cobertura de tests
+
+Los siguientes módulos tienen cobertura de tests:
+
+- ✅ **`src/lib/db.ts`** - Módulo de base de datos SQLite (100% cobertura)
+  - Tests de operaciones CRUD
+  - Tests de constraints únicos
+  - Tests de transacciones
+  - Tests de logs de scraping
+
+- ✅ **`src/lib/rateLimit.ts`** - Módulo de rate limiting (85% cobertura)
+  - Tests de límites por IP
+  - Tests de ventanas de tiempo
+  - Tests de reset automático
+  - Tests con múltiples IPs
+
+- ✅ **`src/lib/scraper.ts`** - Módulo de scraping web (100% cobertura)
+  - Tests de parsing HTML
+  - Tests de sanitización de texto
+  - Tests de datos demo (fallback)
+  - Tests de formateo de fechas
+  - Tests de manejo de errores de red
 
 ## Endpoints
 
