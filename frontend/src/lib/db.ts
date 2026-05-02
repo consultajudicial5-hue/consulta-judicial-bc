@@ -2,19 +2,30 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 
-const DATA_DIR = process.env.DATA_DIR ?? './data'
-const DB_PATH = path.resolve(DATA_DIR, 'boletin.db')
-
 let db: Database.Database | null = null
+
+function getDbPath(): string {
+  const DATA_DIR = process.env.DATA_DIR ?? './data'
+  return path.resolve(DATA_DIR, 'boletin.db')
+}
 
 function getDb(): Database.Database {
   if (db) return db
+  const DB_PATH = getDbPath()
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
   db = new Database(DB_PATH)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   initSchema(db)
   return db
+}
+
+// For testing only - closes and resets the database connection
+export function closeDb() {
+  if (db) {
+    db.close()
+    db = null
+  }
 }
 
 function initSchema(db: Database.Database) {

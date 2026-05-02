@@ -6,6 +6,11 @@ interface RateLimitEntry {
 const store = new Map<string, RateLimitEntry>()
 const RPM = parseInt(process.env.RATE_LIMIT_RPM ?? '30', 10)
 
+// For testing only - clears the rate limit store
+export function clearRateLimitStore() {
+  store.clear()
+}
+
 export function checkRateLimit(ip: string): { allowed: boolean; remaining: number; resetIn: number } {
   const now = Date.now()
   const windowMs = 60_000
